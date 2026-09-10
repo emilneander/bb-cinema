@@ -1,0 +1,11 @@
+CREATE TABLE users (id TEXT PRIMARY KEY CHECK(id IN ('owner','partner')), name TEXT NOT NULL, language TEXT NOT NULL DEFAULT 'en-US' CHECK(language IN ('en-US','sv-SE','zh-CN')));
+CREATE TABLE invites (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE catalog (tmdb_id INTEGER NOT NULL, media_type TEXT NOT NULL DEFAULT 'movie' CHECK(media_type IN ('movie','tv')), title TEXT NOT NULL, original_title TEXT, release_year INTEGER, poster_path TEXT, backdrop_path TEXT, runtime_minutes INTEGER, refreshed_at INTEGER NOT NULL, PRIMARY KEY(tmdb_id,media_type));
+CREATE TABLE wishlist (tmdb_id INTEGER NOT NULL, media_type TEXT NOT NULL DEFAULT 'movie', added_by TEXT NOT NULL REFERENCES users(id), added_at INTEGER NOT NULL, PRIMARY KEY(tmdb_id,media_type), FOREIGN KEY(tmdb_id,media_type) REFERENCES catalog(tmdb_id,media_type));
+CREATE TABLE library (id TEXT PRIMARY KEY, title TEXT NOT NULL, tmdb_id INTEGER, duration_ms INTEGER NOT NULL, manual_tmdb_id INTEGER, available INTEGER NOT NULL DEFAULT 1, scanned_at INTEGER NOT NULL);
+CREATE INDEX library_tmdb ON library(tmdb_id);
+CREATE TABLE preferences (user_id TEXT NOT NULL REFERENCES users(id), tmdb_id INTEGER NOT NULL, media_type TEXT NOT NULL DEFAULT 'movie', vote TEXT NOT NULL CHECK(vote IN ('love','maybe','no')), PRIMARY KEY(user_id,tmdb_id,media_type), FOREIGN KEY(tmdb_id,media_type) REFERENCES catalog(tmdb_id,media_type));
+CREATE TABLE watch_sessions (id TEXT PRIMARY KEY, tmdb_id INTEGER, jellyfin_item_id TEXT NOT NULL, started_at INTEGER NOT NULL, completed_at INTEGER);
+CREATE TABLE room (id INTEGER PRIMARY KEY CHECK(id=1), snapshot TEXT NOT NULL);
+CREATE TABLE metadata_cache (key TEXT PRIMARY KEY, body TEXT NOT NULL, expires_at INTEGER NOT NULL);

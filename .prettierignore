@@ -1,0 +1,11 @@
+node_modules
+**/.next
+**/next-env.d.ts
+**/*.tsbuildinfo
+data
+backups
+test-results
+playwright-report
+config/*.plist
+bun.lock
+apps/web/public/tmdb.svg

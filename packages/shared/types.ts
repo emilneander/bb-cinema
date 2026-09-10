@@ -1,0 +1,54 @@
+import type { UserId } from '../sync/protocol';
+export type User = {
+  id: UserId;
+  name: string;
+  language: 'en-US' | 'sv-SE' | 'zh-CN';
+  named: number;
+};
+export type Session = User & { hash: string; csrf: string; expires_at: number; can_manage: number };
+export type LibraryItem = {
+  catalogTmdbId?: number;
+  catalogMediaType?: 'movie' | 'tv';
+  episodeTitle?: string;
+  episodeOverview?: string;
+  posterPath?: string;
+  backdropPath?: string;
+  stillPath?: string;
+  position_ms?: number;
+  progress_updated_at?: number;
+  added_at?: number;
+  seriesName?: string;
+  seriesOverview?: string;
+  seriesGenres?: string[];
+  seriesId?: string;
+  season?: number;
+  episode?: number;
+  imageId?: string;
+  backdropId?: string;
+  year?: number;
+
+  id: string;
+  title: string;
+  tmdb_id: number | null;
+  manual_tmdb_id: number | null;
+  duration_ms: number;
+  available: number;
+};
+export type Movie = {
+  mediaType?: 'movie' | 'tv';
+  id: number;
+  title: string;
+  original_title?: string;
+  release_date?: string;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  overview?: string;
+  runtime?: number | null;
+  vote_average?: number;
+  genres?: { id: number; name: string }[];
+  credits?: { cast: { id: number; name: string; character?: string }[] };
+  jellyfinItemId?: string;
+  addedBy?: string;
+  status?: string;
+  votes?: Record<string, string>;
+};

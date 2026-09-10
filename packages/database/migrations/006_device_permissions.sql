@@ -1,0 +1,3 @@
+ALTER TABLE invites ADD COLUMN can_manage INTEGER NOT NULL DEFAULT 0 CHECK(can_manage IN (0,1));
+ALTER TABLE sessions ADD COLUMN can_manage INTEGER NOT NULL DEFAULT 0 CHECK(can_manage IN (0,1));
+CREATE TABLE installation (id INTEGER PRIMARY KEY CHECK(id=1), settings TEXT NOT NULL);
