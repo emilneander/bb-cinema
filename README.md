@@ -1,8 +1,12 @@
 # bb cinema
 
-A private movie library, TMDB wishlist and synchronized playback room for two authenticated users. Local media stays on the Mac and streams through Jellyfin. The application has a custom Next.js interface, a persistent Bun gateway, SQLite, and a server-authoritative WebSocket room.
+**Watch movies and series together, with synchronized playback.**
 
-Both profiles use **one shared wishlist, one shared library and one playback room**. Profiles identify participants and store name/language preferences. Host authority belongs to the paired device, independently of the selected profile.
+bb cinema is a self-hosted app for two people to watch together from separate devices. Choose something from a shared library, join the same lobby, and play, pause or seek from either device. Playback stays coordinated when someone buffers or reconnects. You can also watch alone.
+
+Search TMDB, save titles to a shared wishlist, and see which ones are available in your library. Local media stays on the host Mac and streams through Jellyfin; viewers do not need to transfer the whole file first.
+
+Both profiles share **one library, one wishlist and one playback room**. This developer preview supports two participants. Hosting currently requires macOS, Bun, Node and a separate Jellyfin installation; there is no one-click installer yet.
 
 ## Viewing devices
 
