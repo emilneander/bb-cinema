@@ -1251,7 +1251,7 @@ function Settings({
                     const bytes = (await r.arrayBuffer()).byteLength;
                     const mbps = (bytes * 8) / (performance.now() - start) / 1000;
                     setSpeed(
-                      `${mbps.toFixed(1)} Mbps measured. ${mbps >= 9 ? 'Try 1080p · 6 Mbps.' : mbps >= 4.5 ? 'Try 720p · 3 Mbps.' : mbps >= 2.25 ? 'Try 720p · 1.5 Mbps.' : mbps >= 1.5 ? 'Try 480p · 1 Mbps.' : 'This connection may be too slow even for 480p · 1 Mbps.'} A short sample is an estimate, not a guarantee.`,
+                      `${mbps.toFixed(1)} Mbps measured. ${mbps >= 9 ? 'Try 1080p · 6 Mbps.' : mbps >= 4.5 ? 'Try 720p · 3 Mbps.' : mbps >= 2.25 ? 'Try 720p · 1.5 Mbps.' : mbps >= 1.5 ? 'Try 480p · 1 Mbps.' : mbps >= 0.9 ? 'Try 480p · 0.6 Mbps.' : 'This connection may be too slow even for 480p · 0.6 Mbps.'} A short sample is an estimate, not a guarantee.`,
                     );
                   })
                   .catch(() => setSpeed('Connection test failed. Check your tailnet connection.'))

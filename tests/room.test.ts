@@ -135,6 +135,26 @@ test('next episode waits for both viewers to load before autoplaying', () => {
   expect(room.state.autoStart).toBe(false);
   expect(room.state.positionMs).toBe(0);
 });
+test('next episode autoplay also waits for a viewer still loading a start cushion', () => {
+  const { room } = setup();
+  room.select('b'.repeat(32), 100000, true);
+  room.apply('owner', { type: 'buffering-ended' });
+  room.apply('owner', { type: 'ready' });
+  room.apply('partner', { type: 'buffering-started' });
+  room.apply('partner', { type: 'ready' });
+  expect(room.state.playing).toBe(false);
+  room.apply('partner', { type: 'buffering-ended' });
+  expect(room.state.playing).toBe(true);
+  expect(room.state.autoStart).toBe(false);
+  expect(room.state.positionMs).toBe(0);
+});
+test('a start cushion never starts a room that was not set to autoplay', () => {
+  const { room } = setup();
+  room.apply('partner', { type: 'buffering-started' });
+  room.apply('partner', { type: 'ready' });
+  room.apply('partner', { type: 'buffering-ended' });
+  expect(room.state.playing).toBe(false);
+});
 test('pause cancels next episode autoplay and solo playback needs one ready viewer', () => {
   const { room } = setup();
   room.select('b'.repeat(32), 100000, true);

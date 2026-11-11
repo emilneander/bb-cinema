@@ -2,7 +2,16 @@ import { z } from 'zod';
 export const userId = z.enum(['owner', 'partner']);
 export type UserId = z.infer<typeof userId>;
 export const language = z.enum(['en-US', 'sv-SE', 'zh-CN']);
-export const quality = z.enum(['auto', '1080-10', '1080-6', '1080-4', '720-3', '720-1.5', '480-1']);
+export const quality = z.enum([
+  'auto',
+  '1080-10',
+  '1080-6',
+  '1080-4',
+  '720-3',
+  '720-1.5',
+  '480-1',
+  '480-0.6',
+]);
 export const itemId = z.string().regex(/^[a-fA-F0-9]{32}$/);
 const position = z.number().finite().min(0).max(86_400_000);
 export const command = z.discriminatedUnion('type', [

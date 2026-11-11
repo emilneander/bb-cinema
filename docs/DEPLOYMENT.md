@@ -31,6 +31,8 @@ All application listeners remain on localhost. Optional HTTP fallback: use a pri
 
 Run the authenticated Settings → Test this connection **on the viewing device**, not the Mac. It measures an uncached random 8 MB payload without compression. Aim for sustained throughput comfortably above 6 Mbps, with headroom (9+ Mbps is a useful initial indication). A short HTTP sample cannot predict a whole movie. Run at least a 20-minute actual playback trial and inspect buffering and drift in diagnostics. On the Mac, `tailscale status` and `tailscale ping <viewer-device-name-or-IP>` indicate direct versus relayed routing. A DERP relay or regional connectivity limitations can constrain throughput. Do not promise 1080p just because both devices joined the tailnet. Try 1080p/4 Mbps or 720p/3 Mbps when necessary. No automatic networking changes or circumvention mechanisms are built in.
 
+Long-distance viewers: wherever the browser has Media Source Extensions (desktop browsers and iPad Safari), transcoded HLS plays through HLS.js, which downloads up to ten minutes ahead (less at high bitrates). After marking ready, such a viewer loads a 30-second start cushion first; the room shows them as loading ahead and waits. Each repeated stall waits for a longer cushion (30 s, 60 s, then 2 min), and after two stalls the player suggests a lower quality. 480p / 0.6 Mbps is the lowest tier. Keep Jellyfin's **Throttle transcodes** and **Delete segments** off (Playback → Transcoding) so it transcodes as far ahead as the player asks. Opening the lobby a few minutes early lets the cushion fill before you start. iPhone Safari has no classic MSE, so it keeps the native player and its own short buffer.
+
 ## Startup and power
 
 ```sh

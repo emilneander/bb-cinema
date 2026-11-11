@@ -6,20 +6,25 @@ type Phase = 'preparing' | 'loading' | 'buffering' | 'partner' | 'connecting' | 
 export function PlayerStatus({
   phase,
   name,
+  progress,
   retry,
 }: {
   phase: Phase;
   name: string;
+  /** Visible progress while loading a long cushion, e.g. "0:12 of 0:30 loaded". */
+  progress?: string;
   retry: () => void;
 }) {
   const [slow, setSlow] = useState(false);
   const busy = phase !== 'idle' && phase !== 'error';
+  // Progress restarts the clock: a long cushion that keeps growing is not "slow".
   useEffect(() => {
     setSlow(false);
     if (!busy) return;
     const timer = setTimeout(() => setSlow(true), 12000);
     return () => clearTimeout(timer);
-  }, [phase, busy]);
+  }, [phase, busy, progress]);
+  const cushion = phase === 'buffering' && progress && !slow ? progress : undefined;
   const label =
     phase === 'error'
       ? 'Playback interrupted'
@@ -32,7 +37,9 @@ export function PlayerStatus({
             : slow
               ? 'Still loading…'
               : phase === 'buffering'
-                ? 'Buffering…'
+                ? cushion
+                  ? 'Loading ahead…'
+                  : 'Buffering…'
                 : phase === 'preparing'
                   ? 'Preparing video…'
                   : 'Loading video…';
@@ -61,7 +68,7 @@ export function PlayerStatus({
                 ? 'Reconnect to try again.'
                 : slow
                   ? 'The connection is taking longer than usual.'
-                  : '\u00a0'}
+                  : cushion || '\u00a0'}
         </span>
         {(phase === 'error' || (slow && phase !== 'partner' && phase !== 'connecting')) && (
           <button className="player-status-retry" onClick={retry}>

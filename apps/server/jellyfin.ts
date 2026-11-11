@@ -265,9 +265,10 @@ export class Jellyfin {
           '720-3': 3_000_000,
           '720-1.5': 1_500_000,
           '480-1': 1_000_000,
+          '480-0.6': 600_000,
         } as Record<string, number>
       )[choice] || 6_000_000;
-    const height = choice === '480-1' ? 480 : choice.startsWith('720-') ? 720 : 1080;
+    const height = choice.startsWith('480-') ? 480 : choice.startsWith('720-') ? 720 : 1080;
     const profile = {
       Name: 'Our Cinema',
       MaxStreamingBitrate: bitrate,
@@ -290,7 +291,8 @@ export class Jellyfin {
           Context: 'Streaming',
           MaxAudioChannels: '2',
           MinSegments: 2,
-          SegmentLength: 4,
+          // Longer segments mean fewer request round trips on high-latency links.
+          SegmentLength: 6,
           BreakOnNonKeyFrames: false,
         },
       ],

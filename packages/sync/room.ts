@@ -189,11 +189,14 @@ export class Room {
       case 'buffering-ended':
         p.buffering = false;
         this.buffers.delete(id);
+        // A viewer may mark ready while still building a start cushion; an
+        // automatic next-episode start then waits for that cushion too.
         if (
-          this.resumeAfterBuffer &&
+          (this.resumeAfterBuffer || this.state.autoStart) &&
           this.required().every((p) => p.connected && p.ready && !p.buffering)
         ) {
           this.state.changedAtServerMs = this.now();
+          this.state.autoStart = false;
           this.state.playing = true;
           this.resumeAfterBuffer = false;
         }

@@ -7,7 +7,12 @@ import { api, preparePlayback } from './api';
 import { Icon } from './icons';
 import { PlayerStatus } from './player-status';
 import { detectQuality } from './auto-quality';
-import { hasRecoveryBuffer } from '../../../packages/sync/buffer';
+import {
+  bufferedAhead,
+  forwardBufferSeconds,
+  hasRecoveryBuffer,
+  playbackCushion,
+} from '../../../packages/sync/buffer';
 import type { User, LibraryItem } from '../../../packages/shared/types';
 const playbackSchema = z.object({
   streamId: z.uuid(),
@@ -66,7 +71,10 @@ export default function Player({
     [reload, setReload] = useState(0),
     [now, setNow] = useState(0),
     [volume, setVolume] = useState(1),
-    [showControls, setShowControls] = useState(true);
+    [showControls, setShowControls] = useState(true),
+    [ahead, setAhead] = useState(0),
+    [cushionTarget, setCushionTarget] = useState(0),
+    [stallCount, setStallCount] = useState(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
     seekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
     scrubbing = useRef(false),
@@ -76,7 +84,12 @@ export default function Player({
     generation = useRef(0),
     startingRef = useRef(false),
     playbackAllowed = useRef(false),
-    recovering = useRef(false);
+    recovering = useRef(false),
+    // Seconds HLS.js may buffer ahead; undefined when the browser decides (native player).
+    deepBuffer = useRef<number | undefined>(undefined),
+    stalls = useRef(0),
+    cushion = useRef(6),
+    growth = useRef({ ahead: 0, at: 0 });
   useEffect(() => {
     if (!connected) return;
     const controller = new AbortController();
@@ -91,9 +104,11 @@ export default function Player({
   useEffect(() => {
     const v = video.current;
     setBufferedRanges([]);
+    setAhead(0);
     if (!v || !playback) return;
     const update = () => {
       const snapshot = v.buffered;
+      setAhead(Math.floor(bufferedAhead(snapshot, v.currentTime)));
       const ranges = Array.from({ length: snapshot.length }, (_, i) => ({
         start: snapshot.start(i) * 1000,
         end: snapshot.end(i) * 1000,
@@ -150,15 +165,50 @@ export default function Player({
     },
     [csrf],
   );
+  const beginRecovery = useCallback((seconds: number) => {
+    recovering.current = true;
+    cushion.current = seconds;
+    setCushionTarget(seconds);
+    growth.current = { ahead: 0, at: Date.now() };
+  }, []);
+  /**
+   * Mark ready. With a deep HLS.js buffer the viewer first loads a start
+   * cushion, reported as buffering so the room waits instead of starting a
+   * stream that stalls seconds later on a slow link.
+   */
+  const markReady = useCallback(
+    (gate: boolean) => {
+      const v = video.current;
+      const need = playbackCushion(0, deepBuffer.current);
+      if (
+        gate &&
+        v &&
+        deepBuffer.current &&
+        !current.current?.soloUserId &&
+        !hasRecoveryBuffer(v.buffered, v.currentTime, v.duration, need)
+      ) {
+        beginRecovery(need);
+        send({ type: 'buffering-started' });
+      } else send({ type: 'buffering-ended' });
+      send({ type: 'ready' });
+    },
+    [send, beginRecovery],
+  );
   useEffect(() => {
     if (!item || !connected || !effectiveQuality) return;
     const controller = new AbortController();
     let hls: { destroy: () => void } | undefined;
     let streamId: string | undefined;
     let autoStartTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let detachPage: (() => void) | undefined;
     const version = ++generation.current;
     setLoaded(false);
     recovering.current = false;
+    deepBuffer.current = undefined;
+    stalls.current = 0;
+    cushion.current = 6;
+    setStallCount(0);
     startingRef.current = false;
     setStarting(false);
     setPlayback(undefined);
@@ -192,23 +242,80 @@ export default function Player({
         const p = playbackSchema.parse(value);
         streamId = p.streamId;
         activeStream.current = p.streamId;
-        if (!p.hls || v.canPlayType('application/vnd.apple.mpegurl')) {
+        // Prefer HLS.js wherever classic Media Source Extensions exist (desktop
+        // browsers and iPad Safari): unlike Safari's native HLS player it can be
+        // told to download minutes ahead, which a slow long-distance link needs.
+        // iPhone Safari has no classic MSE and keeps native HLS.
+        let Hls: typeof import('hls.js').default | undefined;
+        if (p.hls && typeof window.MediaSource !== 'undefined') {
+          const loaded = (await import('hls.js')).default;
+          if (controller.signal.aborted) return;
+          if (loaded.isSupported()) Hls = loaded;
+        }
+        if (!Hls) {
+          if (p.hls && !v.canPlayType('application/vnd.apple.mpegurl'))
+            throw new Error('This browser cannot play this HLS stream. Please use Safari.');
           v.src = p.url;
           v.load();
         } else {
-          const { default: Hls } = await import('hls.js');
-          if (controller.signal.aborted) return;
-          if (!Hls.isSupported())
-            throw new Error('This browser cannot play this HLS stream. Please use Safari.');
-          const instance = new Hls({ maxBufferLength: 30, backBufferLength: 30 });
-          hls = instance;
-          instance.on(Hls.Events.ERROR, (_event, data) => {
-            if (data.fatal) {
-              send({ type: 'unready' });
-              send({ type: 'player-error', stage: 'hls' });
-              setError('The stream was interrupted. Try reconnecting the player.');
-            }
+          const forward = forwardBufferSeconds(p.bitrate);
+          const s = current.current;
+          const patient = {
+            maxTimeToFirstByteMs: 30000,
+            maxLoadTimeMs: 180000,
+            timeoutRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            errorRetry: { maxNumRetry: 10, retryDelayMs: 1000, maxRetryDelayMs: 15000 },
+          };
+          const instance = new Hls({
+            // ManagedMediaSource lets Safari stop downloading whenever it judges
+            // the buffer sufficient, which defeats the long cushion.
+            preferManagedMediaSource: false,
+            startPosition: s ? expectedPosition(s, Date.now() + offset.current) / 1000 : -1,
+            maxBufferLength: forward,
+            maxMaxBufferLength: forward,
+            backBufferLength: 30,
+            fragLoadPolicy: { default: patient },
+            manifestLoadPolicy: { default: patient },
+            playlistLoadPolicy: { default: patient },
           });
+          hls = instance;
+          deepBuffer.current = forward;
+          let recoveries = 0;
+          instance.on(Hls.Events.FRAG_BUFFERED, () => {
+            recoveries = 0;
+          });
+          instance.on(Hls.Events.ERROR, (_event, data) => {
+            if (!data.fatal || controller.signal.aborted) return;
+            // Long-distance links drop out briefly; retry before giving up.
+            if (recoveries < 5 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              recoveries++;
+              clearTimeout(retryTimer);
+              retryTimer = setTimeout(() => {
+                if (!controller.signal.aborted) instance.startLoad();
+              }, 2000 * recoveries);
+              return;
+            }
+            if (recoveries < 5 && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              recoveries++;
+              instance.recoverMediaError();
+              return;
+            }
+            send({ type: 'unready' });
+            send({ type: 'player-error', stage: 'hls' });
+            setError('The stream was interrupted. Try reconnecting the player.');
+          });
+          // Abort read-ahead downloads cleanly when the page is left, rather than
+          // have navigation cut them off; resume if Safari restores the page.
+          const leave = () => instance.stopLoad();
+          const back = (e: PageTransitionEvent) => {
+            if (e.persisted) instance.startLoad();
+          };
+          window.addEventListener('pagehide', leave);
+          window.addEventListener('pageshow', back);
+          detachPage = () => {
+            window.removeEventListener('pagehide', leave);
+            window.removeEventListener('pageshow', back);
+          };
           instance.loadSource(p.url);
           instance.attachMedia(v);
         }
@@ -227,7 +334,7 @@ export default function Player({
               if (controller.signal.aborted || version !== generation.current) return;
               v.pause();
               setActivated(true);
-              send({ type: 'ready' });
+              markReady(true);
             })
             .catch(() => {
               if (!controller.signal.aborted) {
@@ -254,6 +361,8 @@ export default function Player({
     return () => {
       controller.abort();
       clearTimeout(autoStartTimer);
+      clearTimeout(retryTimer);
+      detachPage?.();
       if (streamId) void report('stop', streamId);
       if (activeStream.current === streamId) activeStream.current = undefined;
       hls?.destroy();
@@ -262,7 +371,19 @@ export default function Player({
       v.removeAttribute('src');
       v.load();
     };
-  }, [item, effectiveQuality, audio, burnSubtitle, reload, csrf, send, connected, report]);
+  }, [
+    item,
+    effectiveQuality,
+    audio,
+    burnSubtitle,
+    reload,
+    csrf,
+    send,
+    connected,
+    report,
+    markReady,
+    offset,
+  ]);
   useEffect(() => {
     const interval = setInterval(() => {
       const v = video.current,
@@ -285,13 +406,19 @@ export default function Player({
       setNow(actual);
       // Keep a stalled client out of the moving-target seek loop. Once the
       // server pauses the room, align once and refill at that shared position.
-      if (
-        recovering.current &&
-        !v.seeking &&
-        hasRecoveryBuffer(v.buffered, v.currentTime, v.duration)
-      ) {
-        recovering.current = false;
-        send({ type: 'buffering-ended' });
+      if (recovering.current && !v.seeking) {
+        const loaded = bufferedAhead(v.buffered, v.currentTime);
+        if (loaded > growth.current.ahead + 0.5) growth.current = { ahead: loaded, at: Date.now() };
+        // If the buffer stops growing short of the cushion (a browser memory
+        // cap, for instance), settle for what is there rather than wait forever.
+        const plateaued = loaded >= 6 && Date.now() - growth.current.at > 30000;
+        if (
+          hasRecoveryBuffer(v.buffered, v.currentTime, v.duration, cushion.current) ||
+          plateaued
+        ) {
+          recovering.current = false;
+          send({ type: 'buffering-ended' });
+        }
       }
       if (recovering.current && s.playing) return;
       if (!s.playing) {
@@ -354,7 +481,7 @@ export default function Player({
     scrubbing.current = false;
     seekTo(seekPreview.current);
   }
-  async function ready() {
+  async function ready(gate = true) {
     const v = video.current;
     if (!v || !playback || startingRef.current) return false;
     const version = generation.current;
@@ -375,8 +502,7 @@ export default function Player({
       if (!current.current?.playing) v.pause();
       playbackAllowed.current = true;
       setActivated(true);
-      send({ type: 'buffering-ended' });
-      send({ type: 'ready' });
+      markReady(gate);
       if (!reportStarted.current) {
         reportStarted.current = true;
         void report('start');
@@ -428,6 +554,8 @@ export default function Player({
       .every((p) => p.connected && p.ready && !p.buffering),
   );
   const waitingName = users.find((u) => u.id !== userId)?.name || 'the other viewer';
+  const other = room?.participants.find((p) => p.userId !== userId);
+  const loadingAhead = `${time(Math.min(ahead, cushionTarget) * 1000)} of ${time(cushionTarget * 1000)} loaded`;
 
   return (
     <div className="player-section">
@@ -504,18 +632,20 @@ export default function Player({
                     ? 'Pause'
                     : !self?.ready
                       ? 'I’m ready'
-                      : allReady
-                        ? room?.soloUserId
-                          ? 'Play alone'
-                          : 'Play'
-                        : `Waiting for ${waitingName}`}
+                      : self.buffering
+                        ? 'Loading ahead…'
+                        : allReady
+                          ? room?.soloUserId
+                            ? 'Play alone'
+                            : 'Play'
+                          : `Waiting for ${waitingName}`}
           </button>
           {!room?.playing && !allReady && (
             <button
               className="text-button"
               disabled={!playback || !connected || starting}
               onClick={async () => {
-                if (await ready()) send({ type: 'play', override: true });
+                if (await ready(false)) send({ type: 'play', override: true });
               }}
             >
               Watch alone
@@ -538,9 +668,13 @@ export default function Player({
                   ? 'Tap “I’m ready” to load your video.'
                   : !self?.ready
                     ? 'Choose your audio and subtitles, then mark yourself ready.'
-                    : allReady
-                      ? 'Ready to start.'
-                      : `${waitingName} hasn’t marked ready yet.`}
+                    : self.buffering
+                      ? `Loading ahead so playback won’t stall: ${loadingAhead}.`
+                      : allReady
+                        ? 'Ready to start.'
+                        : other?.ready && other.buffering
+                          ? `${waitingName} is still loading ahead.`
+                          : `${waitingName} hasn’t marked ready yet.`}
         </p>
       </section>
       <div
@@ -566,11 +700,12 @@ export default function Player({
           onCanPlay={() => setLoaded(true)}
           onWaiting={() => {
             if (activated && !recovering.current) {
-              recovering.current = true;
+              stalls.current++;
+              setStallCount(stalls.current);
+              beginRecovery(playbackCushion(stalls.current, deepBuffer.current));
               send({ type: 'buffering-started' });
             }
           }}
-
           onPlay={() => nativeAction('play')}
           onPause={() => nativeAction('pause')}
           onSeeked={() => {
@@ -637,6 +772,7 @@ export default function Player({
                             : 'loading'
             }
             name={waitingName}
+            progress={self?.buffering && cushionTarget > 6 ? loadingAhead : undefined}
             retry={() => setReload((n) => n + 1)}
           />
         )}
@@ -780,6 +916,12 @@ export default function Player({
           </span>
         </div>
       )}
+      {stallCount >= 2 && effectiveQuality !== '480-0.6' && (
+        <p role="status" className="notice">
+          Your connection can’t keep up with this picture quality. Choose a lower one below to stop
+          pausing.
+        </p>
+      )}
       <div className="stream-settings">
         <label>
           Picture quality
@@ -793,6 +935,7 @@ export default function Player({
             <option value="720-3">720p · 3 Mbps</option>
             <option value="720-1.5">720p · 1.5 Mbps</option>
             <option value="480-1">480p · 1 Mbps</option>
+            <option value="480-0.6">480p · 0.6 Mbps</option>
           </select>
         </label>
         <label>

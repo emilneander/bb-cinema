@@ -1,5 +1,13 @@
 export function recommendedQuality(mbps: number) {
-  return mbps >= 9 ? '1080-6' : mbps >= 4.5 ? '720-3' : mbps >= 2.25 ? '720-1.5' : '480-1';
+  return mbps >= 9
+    ? '1080-6'
+    : mbps >= 4.5
+      ? '720-3'
+      : mbps >= 2.25
+        ? '720-1.5'
+        : mbps >= 1.5
+          ? '480-1'
+          : '480-0.6';
 }
 /** A bounded sample through the same authenticated route as playback. */
 export async function detectQuality(signal: AbortSignal) {
